@@ -18,6 +18,7 @@ import board
 import busio
 import digitalio
 import adafruit_mcp3xxx.mcp3008 as MCP
+from adafruit_mcp3xxx.analog_in import AnalogIn
 import adafruit_dht
 import pandas as pd
 import time
@@ -26,25 +27,16 @@ import math
 from datetime import datetime
 from typing import Dict, Any
 
-# Assuming a simple logger setup
+# Simple logger setup
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- CALIBRATION CONSTANTS (FINALIZED) ---
-# Load Resistance (R_L) for the voltage divider circuit on the MQ module.
-RL_KOHM = 1.0 # <--- FINALIZED: 1 kOhm
-
-# Voltage Divider Ratio (Div_Ratio) to correct for VOUT scaling.
-# Div_Ratio = (R1 + R2) / R2 = (470 + 1000) / 1000 = 1.47
-DIV_RATIO = 1.47
-
-# True 10-bit max value for the MCP3008 (used for V_ref conversion)
-ADC_MAX_10BIT = 1023.0 
-
-# --- EXPERIMENT CONSTANTS ---
-# Set the known gas concentration (e.g., Ammonia) for the experiment run
-TRUE_PPM_VALUE = 100 
+RL_KOHM = 1.0  # Load Resistance in kOhm
+DIV_RATIO = 1.47  # Voltage Divider Ratio
+ADC_MAX_10BIT = 1023.0  # Max value for 10-bit ADC
+TRUE_PPM_VALUE = 100  # Set the known gas concentration for the experiment
 
 
 class DataCollector:
@@ -52,31 +44,31 @@ class DataCollector:
     Collects real-time sensor data from a Raspberry Pi
     """
     def __init__(self):
-        # Initialize ADC for MQ sensors
+        # Initialize SPI and MCP3008
         self.spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
-        self.cs = digitalio.DigitalInOut(board.D5)  # Chip Select pin
+        self.cs = digitalio.DigitalInOut(board.D5)
         self.mcp = MCP.MCP3008(self.spi, self.cs)
 
-        # Initialize DHT sensor for temperature/humidity
-        self.dht = adafruit_dht.DHT11(board.D4)  # Data pin
-        
-        # Mapping of sensor names to ADC channels
+        # Initialize DHT sensor
+        self.dht = adafruit_dht.DHT11(board.D4)
+
+        # Define sensor ADC channels using AnalogIn
         self.sensor_channels = {
-            'MQ2_adc': self.mcp.channels[0],
-            'MQ4_adc': self.mcp.channels[1],
-            'MQ5_adc': self.mcp.channels[2],
-            'MQ9_adc': self.mcp.channels[3],
-            'MQ135_adc': self.mcp.channels[4]
+            'MQ2_adc': AnalogIn(self.mcp, MCP.P0),
+            'MQ4_adc': AnalogIn(self.mcp, MCP.P1),
+            'MQ5_adc': AnalogIn(self.mcp, MCP.P2),
+            'MQ9_adc': AnalogIn(self.mcp, MCP.P3),
+            'MQ135_adc': AnalogIn(self.mcp, MCP.P4)
         }
-    
+
     def _read_sensors(self) -> Dict[str, Any]:
         """Reads raw data from all connected sensors"""
         raw_readings = {}
-        
+
         for name, channel in self.sensor_channels.items():
-            # CRITICAL: Convert 16-bit value (0-65535) to 10-bit (0-1023)
+            # Convert 16-bit to 10-bit: MCP returns 0-65535, divide by 64
             raw_readings[name] = channel.value // 64
-            
+
         try:
             temperature = self.dht.temperature
             humidity = self.dht.humidity
@@ -84,7 +76,7 @@ class DataCollector:
             logger.warning(f"DHT sensor reading failed: {error.args[0]}")
             temperature = None
             humidity = None
-            
+
         return {
             'raw_adc_readings': raw_readings,
             'temperature': temperature,
@@ -96,9 +88,8 @@ class DataCollector:
         Continuously collects and logs sensor data to a file
         """
         logger.info(f"Starting real-time data collection. Logging to {log_file}")
-        
         header_needed = not pd.io.common.file_exists(log_file)
-        
+
         while True:
             try:
                 # Read raw sensor data
@@ -112,30 +103,31 @@ class DataCollector:
                     time.sleep(sample_interval)
                     continue
 
-                # Create the data point
+                # Create data point
                 data_point = {
                     'timestamp': datetime.now().isoformat(),
                     'true_ppm': TRUE_PPM_VALUE,
-                    'temp_c': temperature,
-                    'hum_pct': humidity,
+                    'temp_c': float(temperature) if temperature is not None else None,
+                    'hum_pct': float(humidity) if humidity is not None else None,
                     **raw_adc_readings
                 }
-                
-                # Log a summary of the data
-                log_summary = f"MQ2_adc: {data_point['MQ2_adc']}, Temp: {temperature}°C, Hum: {humidity}%"
+
+                # Log summary
+                log_summary = f"MQ2_adc: {data_point['MQ2_adc']}, Temp: {data_point['temp_c']}°C, Hum: {data_point['hum_pct']}%"
                 logger.info(f"Logged new data point. {log_summary}")
 
-                # Convert to DataFrame and append to file
+                # Save to CSV
                 df_point = pd.DataFrame([data_point])
                 df_point.to_csv(log_file, mode='a', header=header_needed, index=False)
-                
+
                 if header_needed:
                     header_needed = False
 
             except Exception as e:
                 logger.error(f"An error occurred during data collection: {e}")
-                
+
             time.sleep(sample_interval)
+
 
 def main():
     """Main function for running data collection"""
@@ -144,21 +136,22 @@ def main():
                         help="Output file path for data logging")
     parser.add_argument("--interval", type=int, default=10,
                         help="Time interval between samples in seconds")
-    
+
     args = parser.parse_args()
-    
+
     logger.info("AEROVANT Custom Real-Time Data Collection Started")
     logger.info("=" * 50)
     logger.info(f"Load Resistance (RL) FINALIZED at: {RL_KOHM} kOhm")
     logger.info(f"Voltage Divider Ratio FINALIZED at: {DIV_RATIO} (for 470/1k divider)")
     logger.info(f"True Gas Concentration set to: {TRUE_PPM_VALUE} ppm")
     logger.info("=" * 50)
-    
+
     collector = DataCollector()
     collector.collect_and_log_data(
         log_file=args.output,
         sample_interval=args.interval
     )
+
 
 if __name__ == "__main__":
     main()
