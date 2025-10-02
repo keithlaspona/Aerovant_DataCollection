@@ -46,7 +46,7 @@ class DataCollector:
     def __init__(self):
         # Initialize SPI and MCP3008
         self.spi = busio.SPI(clock=board.SCK, MISO=board.MISO, MOSI=board.MOSI)
-        self.cs = digitalio.DigitalInOut(board.D5)
+        self.cs = digitalio.DigitalInOut(board.D8)
         self.mcp = MCP.MCP3008(self.spi, self.cs)
 
         # Initialize DHT sensor
