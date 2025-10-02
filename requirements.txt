@@ -1,0 +1,7 @@
+# Hardware interfacing for Raspberry Pi
+adafruit-circuitpython-busdevice
+adafruit-circuitpython-mcp3xxx
+adafruit-circuitpython-dht
+
+# Data handling and logging
+pandas
