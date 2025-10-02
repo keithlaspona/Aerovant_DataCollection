@@ -36,7 +36,7 @@ class DataCollector:
         self.dht = adafruit_dht.DHT11(board.D4)
 
         # Define the specific sensor ADC channel
-        self.sensor_channel = {'MQ2_adc': AnalogIn(self.mcp, MCP.P0)}
+        self.sensor_channel = {'MQ2_adc': AnalogIn(self.mcp, MCP.P4)}
         logger.info("Initialized hardware for MQ-2 sensor.")
 
     def _read_sensors(self) -> Dict[str, Any]:
